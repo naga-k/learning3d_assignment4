@@ -17,6 +17,7 @@ def create_renders(args):
 
     num_views = 32
     azims = np.linspace(-180, 180, num_views)
+    per_splat = args.gaussians_per_splat
 
     debug_root = os.path.join(args.out_path, "q1_render")
     if not os.path.exists(debug_root):
@@ -53,7 +54,7 @@ def create_renders(args):
             # HINT: Set bg_colour to (1.0, 1.0, 1.0)
             # HINT: Get per_splat from args.gaussians_per_splat
             # HINT: img_size and camera are available above
-            img, depth, mask = None
+            img, depth, mask = scene.render(camera = camera,per_splat=per_splat, bg_colour=(0.1,0.1,0.1))
 
         debug_path = os.path.join(debug_root, f"{i:03d}.png")
         img = img.detach().cpu().numpy()
