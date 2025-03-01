@@ -67,8 +67,8 @@ class Gaussians:
         self.pre_act_opacities = data["pre_act_opacities"]
 
         # [Q 1.3.1] NOTE: Uncomment spherical harmonics code for question 1.3.1
-        # if data.get("spherical_harmonics") is not None:
-        #     self.spherical_harmonics = data["spherical_harmonics"]
+        if data.get("spherical_harmonics") is not None:
+            self.spherical_harmonics = data["spherical_harmonics"]
 
         if self.device == "cuda":
             self.to_cuda()
@@ -88,7 +88,7 @@ class Gaussians:
         data["colours"] = torch.tensor(ply_gaussians["dc_colours"])
 
         # [Q 1.3.1] NOTE: Uncomment spherical harmonics code for question 1.3.1
-        # data["spherical_harmonics"] = torch.tensor(ply_gaussians["sh"])
+        data["spherical_harmonics"] = torch.tensor(ply_gaussians["sh"])
 
         if data["pre_act_scales"].shape[1] != 3:
             raise NotImplementedError("Currently does not support isotropic")
@@ -211,7 +211,7 @@ class Gaussians:
         self.pre_act_opacities = self.pre_act_opacities.cuda()
 
         # [Q 1.3.1] NOTE: Uncomment spherical harmonics code for question 1.3.1
-        # self.spherical_harmonics = self.spherical_harmonics.cuda()
+        self.spherical_harmonics = self.spherical_harmonics.cuda()
 
     def compute_cov_3D(self, quats: torch.Tensor, scales: torch.Tensor):
         """
@@ -682,9 +682,9 @@ class Scene:
         # colours instead of using self.gaussians.colours[idxs]. You may also comment
         # out the above line of code since it will be overwritten anyway.
 
-        # spherical_harmonics = self.gaussians.spherical_harmonics[idxs]
-        # gaussian_dirs = self.calculate_gaussian_directions(means_3D, camera)
-        # colours = colours_from_spherical_harmonics(spherical_harmonics, gaussian_dirs)
+        spherical_harmonics = self.gaussians.spherical_harmonics[idxs]
+        gaussian_dirs = self.calculate_gaussian_directions(means_3D, camera)
+        colours = colours_from_spherical_harmonics(spherical_harmonics, gaussian_dirs)
 
         # Apply activations
         quats, scales, opacities = self.gaussians.apply_activations(
@@ -758,5 +758,6 @@ class Scene:
         ### YOUR CODE HERE ###
         # HINT: Think about how to get the camera origin in the world frame.
         # HINT: Do not forget to normalize the computed directions.
-        gaussian_dirs = None  # (N, 3)
+        direction_vector = means_3D - camera.get_camera_center()
+        gaussian_dirs = direction_vector / direction_vector.norm()  # (N, 3)
         return gaussian_dirs

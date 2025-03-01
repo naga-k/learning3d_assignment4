@@ -10,6 +10,19 @@ from torch.utils.data import Dataset
 from pytorch3d.renderer.cameras import PerspectiveCameras, look_at_view_transform
 
 SH_C0 = 0.28209479177387814
+SH_C1 = 0.4886025119029199
+SH_C2_0 = 1.0925484305920792
+SH_C2_1 = -1.0925484305920792
+SH_C2_2 = 0.31539156525252005
+SH_C2_3 = -1.0925484305920792
+SH_C2_4 = 0.5462742152960396
+SH_C3_0 = -0.5900435899266435
+SH_C3_1 = 2.890611442640554
+SH_C3_2 = -0.4570457994644658
+SH_C3_3 = 0.3731763325901154
+SH_C3_4 = -0.4570457994644658
+SH_C3_5 = 1.445305721320277
+SH_C3_6 = -0.5900435899266435
 CMAP_JET = plt.get_cmap("jet")
 CMAP_MIN_NORM, CMAP_MAX_NORM = 5.0, 7.0
 
@@ -206,5 +219,55 @@ def colours_from_spherical_harmonics(spherical_harmonics, gaussian_dirs):
                                     RGB colour.
     """
     ### YOUR CODE HERE ###
-    colours = None
-    return colours
+    c0 = spherical_harmonics[:, :3]
+    colours = SH_C0 * c0
+
+    shdim = spherical_harmonics.shape[1]
+
+    if shdim > 3:
+        c1 = spherical_harmonics[:, 3:6]
+        c2 = spherical_harmonics[:, 6:9]
+        c3 = spherical_harmonics[:, 9:12]
+
+        x = gaussian_dirs[:, 0].unsqueeze(-1)
+        y = gaussian_dirs[:, 1].unsqueeze(-1)
+        z = gaussian_dirs[:, 2].unsqueeze(-1)
+
+        colours = colours - (SH_C1 * (y * c1 + z * c2 - x * c3))
+
+        if shdim > 12:
+            c4 = spherical_harmonics[:, 12:15]
+            c5 = spherical_harmonics[:, 15:18]
+            c6 = spherical_harmonics[:, 18:21]
+            c7 = spherical_harmonics[:, 21:24]
+            c8 = spherical_harmonics[:, 24:27]
+    
+            (xx, yy, zz) = (x * x, y * y, z * z)
+            (xy, yz, xz) = (x * y, y * z, x * z)
+            
+            colours = colours +	SH_C2_0 * xy * c4 + \
+                SH_C2_1 * yz * c5 + \
+                SH_C2_2 * (2.0 * zz - xx - yy) * c6 + \
+                SH_C2_3 * xz * c7 + \
+                SH_C2_4 * (xx - yy) * c8
+
+            if shdim > 27:
+                c9 = spherical_harmonics[:, 27:30]
+                c10 = spherical_harmonics[:, 30:33]
+                c11 = spherical_harmonics[:, 33:36]
+                c12 = spherical_harmonics[:, 36:39]
+                c13 = spherical_harmonics[:, 39:42]
+                c14 = spherical_harmonics[:, 42:45]
+                c15 = spherical_harmonics[:, 45:48]
+        
+                colours = colours + \
+                    SH_C3_0 * y * (3.0 * xx - yy) * c9 + \
+                    SH_C3_1 * xy * z * c10 + \
+                    SH_C3_2 * y * (4.0 * zz - xx - yy) * c11 + \
+                    SH_C3_3 * z * (2.0 * zz - 3.0 * xx - 3.0 * yy) * c12 + \
+                    SH_C3_4 * x * (4.0 * zz - xx - yy) * c13 + \
+                    SH_C3_5 * z * (xx - yy) * c14 + \
+                    SH_C3_6 * x * (xx - 3.0 * yy) * c15
+            
+    colours += 0.5
+    return colours.clip(0.0, 1.0)
