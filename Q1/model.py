@@ -88,7 +88,8 @@ class Gaussians:
         data["colours"] = torch.tensor(ply_gaussians["dc_colours"])
 
         # [Q 1.3.1] NOTE: Uncomment spherical harmonics code for question 1.3.1
-        data["spherical_harmonics"] = torch.tensor(ply_gaussians["sh"])
+        if hasattr(self, 'spherical_harmonics'):
+            data["spherical_harmonics"] = torch.tensor(ply_gaussians["sh"])
 
         if data["pre_act_scales"].shape[1] != 3:
             raise NotImplementedError("Currently does not support isotropic")
@@ -211,7 +212,8 @@ class Gaussians:
         self.pre_act_opacities = self.pre_act_opacities.cuda()
 
         # [Q 1.3.1] NOTE: Uncomment spherical harmonics code for question 1.3.1
-        self.spherical_harmonics = self.spherical_harmonics.cuda()
+        if hasattr(self, 'spherical_harmonics'):
+            self.spherical_harmonics = self.spherical_harmonics.cuda()
 
     def compute_cov_3D(self, quats: torch.Tensor, scales: torch.Tensor):
         """
@@ -294,12 +296,18 @@ class Gaussians:
         cov_3D = self.compute_cov_3D(quats, scales)  # (N, 3, 3)
 
         ### YOUR CODE HERE ###
+        N = cov_3D.shape[0]
+        W = W.expand(N, 3, 3)
         # HINT: Use the above three variables to compute cov_2D
         # Step 1: First transform Gaussian covariance from world to camera space
-        cov_3D_camera = W @ cov_3D @ W.transpose(-2,-1)  # (N, 3, 3)
+        cov_3D_camera = torch.bmm(torch.bmm(W, cov_3D), W.transpose(-2, -1))
+        # cov_3D_camera = W @ cov_3D @ W.transpose(-2,-1)  # (N, 3, 3)
         
         # Step 2: Project camera space covariance to screen space using Jacobian
-        cov_2D = J @ cov_3D_camera @ J.transpose(-2, -1)   # (N, 2, 2)
+        # cov_2D = J @ cov_3D_camera @ J.transpose(-2, -1)   # (N, 2, 2)
+
+        cov_2D = torch.bmm(torch.bmm(J, cov_3D_camera), J.transpose(-2, -1))
+        cov_2D.diagonal(dim1=-2, dim2=-1).add_(0.3)
 
         # Post processing to make sure that each 2D Gaussian covers atleast approximately 1 pixel
         cov_2D[:, 0, 0] += 0.3
@@ -324,7 +332,6 @@ class Gaussians:
         ### YOUR CODE HERE ###
         # HINT: Do note that means_2D have units of pixels. Hence, you must apply a
         # transformation that moves points in the world space to screen space.''    
-        
         return camera.transform_points_screen(means_3D)[:,:2]
 
     @staticmethod
@@ -393,6 +400,119 @@ class Gaussians:
         opacities = torch.sigmoid(pre_act_opacities)
 
         return quats, scales, opacities
+
+    def add(self, new_means, new_pre_act_scales, new_pre_act_opacities, new_colours, new_pre_act_quats=None):
+        """
+        Add new Gaussians to the scene
+        """
+        # Detach from graph, concat, then clone to make new leaf variables
+        self.means = torch.cat([self.means.detach(), new_means.detach()], dim=0).clone()
+        self.pre_act_scales = torch.cat([self.pre_act_scales.detach(), new_pre_act_scales.detach()], dim=0).clone()
+        self.pre_act_opacities = torch.cat([self.pre_act_opacities.detach(), new_pre_act_opacities.detach()], dim=0).clone()
+        self.colours = torch.cat([self.colours.detach(), new_colours.detach()], dim=0).clone()
+        
+        if not self.is_isotropic:
+            if new_pre_act_quats is None:
+                raise ValueError("Quaternions required for anisotropic Gaussians")
+            self.pre_act_quats = torch.cat([self.pre_act_quats.detach(), new_pre_act_quats.detach()], dim=0).clone()
+        
+        # Set requires_grad for the new leaf tensors
+        self.means.requires_grad = True
+        self.pre_act_scales.requires_grad = True
+        self.pre_act_opacities.requires_grad = True
+        self.colours.requires_grad = True
+        if not self.is_isotropic:
+            self.pre_act_quats.requires_grad = True
+
+    def remove(self, indices_to_remove):
+        """
+        Remove Gaussians at the specified indices
+        """
+        if len(indices_to_remove) == 0:
+            return
+
+        # Create a mask for points to keep
+        keep_mask = torch.ones(len(self.means), dtype=torch.bool, device=self.device)
+        keep_mask[indices_to_remove] = False
+        
+        # Detach from computation graph, then clone to create new leaf tensors
+        self.means = self.means.detach()[keep_mask].clone()
+        self.pre_act_scales = self.pre_act_scales.detach()[keep_mask].clone()
+        self.pre_act_opacities = self.pre_act_opacities.detach()[keep_mask].clone()
+        self.colours = self.colours.detach()[keep_mask].clone()
+        
+        if not self.is_isotropic:
+            self.pre_act_quats = self.pre_act_quats.detach()[keep_mask].clone()
+        
+        # These are now leaf nodes, so setting requires_grad should work
+        self.means.requires_grad = True
+        self.pre_act_scales.requires_grad = True
+        self.pre_act_opacities.requires_grad = True
+        self.colours.requires_grad = True
+        if not self.is_isotropic:
+            self.pre_act_quats.requires_grad = True
+
+    def create_new_gaussians_from_existing(self, indices, perturbation_config=None):
+        """
+        Create new Gaussians by perturbing existing ones at the specified indices
+        """
+        if perturbation_config is None:
+            perturbation_config = {
+                'mean_std': 0.01,
+                'scale_std': 0.1,
+                'opacity_std': 0.1,
+                'colour_std': 0.1,
+                'quat_std': 0.1
+            }
+        
+        # num_indices = len(indices)
+        device = self.device
+        
+        # Create two new Gaussians for each selected one
+        new_means = []
+        new_pre_act_scales = []
+        new_pre_act_opacities = []
+        new_colours = []
+        new_pre_act_quats = [] if not self.is_isotropic else None
+        
+        for idx in indices:
+            # Create two perturbed copies for each selected Gaussian
+            for _ in range(2):
+                # Perturb mean
+                mean_perturbation = torch.randn(3, device=device) * perturbation_config['mean_std']
+                new_means.append(self.means[idx] + mean_perturbation)
+                
+                # Perturb scale (slightly smaller)
+                scale_perturbation = torch.randn_like(self.pre_act_scales[idx]) * perturbation_config['scale_std']
+                # Make scales slightly smaller by subtracting a small amount
+                new_pre_act_scales.append(self.pre_act_scales[idx] + scale_perturbation - 0.05)
+                
+                # Perturb opacity
+                opacity_perturbation = torch.randn(1, device=device).squeeze() * perturbation_config['opacity_std']
+                new_pre_act_opacities.append(self.pre_act_opacities[idx] + opacity_perturbation)
+                
+                # Perturb colour
+                colour_perturbation = torch.randn(3, device=device) * perturbation_config['colour_std']
+                new_colours.append(torch.clamp(self.colours[idx] + colour_perturbation, 0.0, 1.0))
+                
+                # Perturb quaternion if not isotropic
+                if not self.is_isotropic:
+                    quat_perturbation = torch.randn(4, device=device) * perturbation_config['quat_std']
+                    perturbed_quat = self.pre_act_quats[idx] + quat_perturbation
+                    # Normalize quaternion
+                    perturbed_quat = perturbed_quat / torch.norm(perturbed_quat)
+                    new_pre_act_quats.append(perturbed_quat)
+        
+        # Convert lists to tensors
+        new_means = torch.stack(new_means, dim=0)
+        new_pre_act_scales = torch.stack(new_pre_act_scales, dim=0)
+        new_pre_act_opacities = torch.stack(new_pre_act_opacities, dim=0)
+        new_colours = torch.stack(new_colours, dim=0)
+        
+        if not self.is_isotropic:
+            new_pre_act_quats = torch.stack(new_pre_act_quats, dim=0)
+        
+        return new_means, new_pre_act_scales, new_pre_act_opacities, new_colours, new_pre_act_quats
 
 class Scene:
 
@@ -682,9 +802,10 @@ class Scene:
         # colours instead of using self.gaussians.colours[idxs]. You may also comment
         # out the above line of code since it will be overwritten anyway.
 
-        spherical_harmonics = self.gaussians.spherical_harmonics[idxs]
-        gaussian_dirs = self.calculate_gaussian_directions(means_3D, camera)
-        colours = colours_from_spherical_harmonics(spherical_harmonics, gaussian_dirs)
+        if hasattr(self.gaussians, 'spherical_harmonics'):
+            spherical_harmonics = self.gaussians.spherical_harmonics[idxs]
+            gaussian_dirs = self.calculate_gaussian_directions(means_3D, camera)
+            colours = colours_from_spherical_harmonics(spherical_harmonics, gaussian_dirs)
 
         # Apply activations
         quats, scales, opacities = self.gaussians.apply_activations(

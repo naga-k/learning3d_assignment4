@@ -1,0 +1,2 @@
+opacities_lr,scales_lr,colours_lr,means_lr,n_iters,psnr,ssim
+0.01,0.001,0.005,0.001,2000,17.853,0.626
