@@ -560,7 +560,7 @@ class Scene:
         """
         ### YOUR CODE HERE ###
         sorted_values, sorted_indices  = torch.sort(z_vals)
-        idxs = sorted_indices[sorted_values >= 0]
+        idxs = sorted_indices[sorted_values >= 1e-6]
         return idxs
 
     def compute_alphas(self, opacities, means_2D, cov_2D, img_size):
@@ -789,7 +789,15 @@ class Scene:
         z_vals = self.compute_depth_values(camera)
         idxs = self.get_idxs_to_filter_and_sort(z_vals)
 
-        pre_act_quats = self.gaussians.pre_act_quats[idxs]
+        # Get parameters for the sorted gaussians
+        # Modified to handle isotropic case differently
+        if not self.gaussians.is_isotropic:
+            pre_act_quats = self.gaussians.pre_act_quats[idxs]
+        else:
+            # For isotropic gaussians, create identity quaternions
+            pre_act_quats = torch.zeros((len(idxs), 4), dtype=torch.float32, device=self.device)
+            pre_act_quats[:, 0] = 1.0  # Identity quaternion
+        
         pre_act_scales = self.gaussians.pre_act_scales[idxs]
         pre_act_opacities = self.gaussians.pre_act_opacities[idxs]
         z_vals = z_vals[idxs]

@@ -179,8 +179,8 @@ def run_training(args):
     l1_loss = L1Loss()
 
     # Add configuration for densification and pruning
-    densification_interval = 10  # Perform densification every 100 iterations
-    pruning_interval = 20        # Perform pruning every 200 iterations
+    densification_interval = 100  # Perform densification every 100 iterations
+    pruning_interval = 200        # Perform pruning every 200 iterations
     max_points = 25000            # Maximum number of Gaussian points
 
     # Training loop
@@ -250,6 +250,7 @@ def run_training(args):
                 # Now recreate the optimizer with the new parameters
                 make_trainable(gaussians)  # Reapply requires_grad=True
                 optimizer, scheduler = setup_optimizer_scheduler(gaussians)
+                torch.cuda.synchronize()
 
         if itr % args.viz_freq == 0:
             viz_frame = visualize_renders(
@@ -356,7 +357,7 @@ def get_args():
         help="Number of iterations to train the model."
     )
     parser.add_argument(
-        "--viz_freq", default=20, type=int,
+        "--viz_freq", default=100, type=int,
         help="Frequency with which visualization should be performed."
     )
     parser.add_argument("--device", default="cuda", type=str, choices=["cuda", "cpu"])
